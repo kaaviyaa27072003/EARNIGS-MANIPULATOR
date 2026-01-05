@@ -1,0 +1,113 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+st.set_page_config(page_title="Earnings Manipulator Dashboard", layout="wide")
+
+# Sidebar: file input
+st.sidebar.title("Controls")
+uploaded_file = st.sidebar.file_uploader("Upload Excel file", type=["xlsx"])
+default_path = "Earnings Manipulator (1).xlsx"
+
+# Load data
+def load_data(file):
+    try:
+        # Try default sheet
+        df = pd.read_excel(file)
+    except:
+        # Fallback: first sheet
+        xls = pd.ExcelFile(file)
+        df = pd.read_excel(xls, xls.sheet_names[0])
+    # Clean column names
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+file_source = uploaded_file if uploaded_file else default_path
+
+try:
+    df = load_data(file_source)
+except Exception as e:
+    st.error(f"Could not load data: {e}")
+    st.stop()
+
+# Basic validation
+required_cols = ["Company ID","DSRI","GMI","AQI","SGI","DEPI","SGAI","ACCR","LEVI","Manipulator"]
+missing = [c for c in required_cols if c not in df.columns]
+if missing:
+    st.warning(f"Missing columns: {missing}. Showing available columns instead.")
+else:
+    df = df[required_cols]
+
+st.title("Earnings Manipulator Analysis")
+st.caption("Interactive dashboard for Beneish-style indicators and classification insights.")
+
+# Summary metrics
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Total companies", len(df))
+with col2:
+    if "Manipulator" in df.columns:
+        manip_count = (df["Manipulator"].astype(str).str.strip().str.lower() == "yes").sum()
+        st.metric("Manipulators (Yes)", manip_count)
+with col3:
+    st.metric("Indicators tracked", len([c for c in df.columns if c not in ["Company ID","Manipulator"]]))
+with col4:
+    st.metric("Has LEVI", int("LEVI" in df.columns))
+
+# Filters
+st.sidebar.subheader("Filters")
+manip_filter = st.sidebar.selectbox("Manipulator status", ["All","Yes","No"])
+if manip_filter != "All" and "Manipulator" in df.columns:
+    df = df[df["Manipulator"].astype(str).str.strip().str.lower() == manip_filter.lower()]
+
+# Table
+st.subheader("Data preview")
+st.dataframe(df.head(50), use_container_width=True)
+
+# Distribution plots
+st.subheader("Indicator distributions")
+numeric_cols = [c for c in df.columns if c not in ["Company ID","Manipulator"]]
+selected_metric = st.selectbox("Select indicator", numeric_cols)
+fig = px.histogram(df, x=selected_metric, color="Manipulator" if "Manipulator" in df.columns else None,
+                   marginal="box", nbins=30, title=f"Distribution of {selected_metric}")
+st.plotly_chart(fig, use_container_width=True)
+
+# Scatter analysis
+st.subheader("Two-variable analysis")
+x_var = st.selectbox("X-axis", numeric_cols, index=0)
+y_var = st.selectbox("Y-axis", numeric_cols, index=1)
+fig2 = px.scatter(df, x=x_var, y=y_var, color="Manipulator" if "Manipulator" in df.columns else None,
+                  hover_data=["Company ID"], trendline="ols", title=f"{x_var} vs {y_var}")
+st.plotly_chart(fig2, use_container_width=True)
+
+# Simple rule-based flag (illustrative)
+st.subheader("Rule-based flag (illustrative)")
+st.caption("This is not a production model—just a quick heuristic for exploration.")
+thresholds = {
+    "DSRI": st.slider("DSRI threshold", 0.0, 10.0, 1.2, 0.1),
+    "GMI": st.slider("GMI threshold", 0.0, 10.0, 1.2, 0.1),
+    "AQI": st.slider("AQI threshold", 0.0, 10.0, 1.2, 0.1),
+    "SGI": st.slider("SGI threshold", 0.0, 10.0, 1.2, 0.1),
+    "DEPI": st.slider("DEPI threshold", 0.0, 10.0, 1.0, 0.1),
+}
+df["Flagged"] = (
+    (df.get("DSRI", 0) > thresholds["DSRI"]) |
+    (df.get("GMI", 0) > thresholds["GMI"]) |
+    (df.get("AQI", 0) > thresholds["AQI"]) |
+    (df.get("SGI", 0) > thresholds["SGI"]) |
+    (df.get("DEPI", 0) > thresholds["DEPI"])
+)
+st.write("Flagged companies (based on thresholds):")
+st.dataframe(df[df["Flagged"]][["Company ID"] + numeric_cols + (["Manipulator"] if "Manipulator" in df.columns else [])],
+             use_container_width=True)
+
+# Download filtered data
+st.subheader("Download")
+st.download_button(
+    label="Download current view as CSV",
+    data=df.to_csv(index=False).encode("utf-8"),
+    file_name="earnings_manipulator_filtered.csv",
+    mime="text/csv"
+)
+
+st.success("App ready. Upload a different Excel file from the sidebar to explore other datasets.")
